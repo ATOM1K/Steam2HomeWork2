@@ -14,6 +14,13 @@ import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
 
+
+
+    @Autowired
+    private KafkaTemplate<String, UserEvent> kafkaTemplate;
+
+    @Value("${kafka.topic.user-events}")
+    private String userEventsTopic;
 /*
  * Сервис для бизнес‑логики работы с пользователями
  * Использует DAO для взаимодействия с базой данных
@@ -50,6 +57,11 @@ public class UserService {
                 throw new DatabaseException("Ошибка при создании пользователя", e);
             }
         }
+        // Отправляем событие в Kafka
+        UserEvent event = new UserEvent("CREATE", userDto.getEmail());
+        kafkaTemplate.send(userEventsTopic, event);
+
+        return savedUserDto;
     }
 
     /*
@@ -123,7 +135,23 @@ public class UserService {
                 userDAO.delete(id, session);
                 transaction.commit();
                 logger.info("Удален пользователь с ID: {}", id);
+                Optional<User> user = userRepository.findById(userId);
+                if (user.isPresent()) {
+                    String email = user.get().getEmail();
+
+                    userRepository.deleteById(userId);
+
+                    // Отправляем событие в Kafka
+                    UserEvent event = new UserEvent("DELETE", email);
+                    kafkaTemplate.send(userEventsTopic, event);
+
+                    return true;
+                }
+                return false;
             } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        } catch (Exception e) {
                 transaction.rollback();
                 logger.error("Ошибка при удалении пользователя с ID: {}", id, e);
                 throw new DatabaseException("Ошибка при удалении пользователя", e);
